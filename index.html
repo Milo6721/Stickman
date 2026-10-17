@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stick Figure</title>
+<style>
+  html,body{margin:0;height:100%;background:#1b1f2a;color:#fff;font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  canvas{background:#bfe6ff;max-width:100%;border:3px solid #000;border-radius:8px}
+  p{margin:8px;font-size:14px;opacity:.8}
+</style>
+</head>
+<body>
+<canvas id="c" width="800" height="450"></canvas>
+<p>← → ruch · ↑ / Spacja skok · Dotrzyj do flagi! Uważaj – ludzik czasem się przewraca 🌎</p>
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const W = 800, H = 450, GROUND = 400;
+
+const LEVELS = [
+  { name: 'Poziom 1', sky: '#bfe6ff', gr: '#5cb85c',
+    plats: [{x:0,y:GROUND,w:800}], flag: 740 },
+  { name: 'Poziom 2', sky: '#ffd9a8', gr: '#c98b4b',
+    plats: [{x:0,y:GROUND,w:260},{x:320,y:340,w:120},{x:500,y:280,w:120},{x:660,y:GROUND,w:140}], flag: 760 },
+  { name: 'Poziom 3', sky: '#c9b8ff', gr: '#7a6bb5',
+    plats: [{x:0,y:GROUND,w:140},{x:200,y:350,w:90},{x:350,y:300,w:90},{x:500,y:250,w:90},{x:350,y:170,w:80},{x:640,y:200,w:160}], flag: 760, flagY: 200 },
+];
+
+const keys = {};
+addEventListener('keydown', e => { keys[e.code] = true; if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault(); });
+addEventListener('keyup', e => keys[e.code] = false);
+
+let level = 0, won = false, msgT = 0;
+const P = { x:40, y:GROUND, vx:0, vy:0, face:1, ground:true, phase:0,
+            state:'ok', st:0, angle:0, nextFall:0 };
+
+function resetPlayer() {
+  const l = LEVELS[level];
+  Object.assign(P, { x:40, y:l.plats[0].y, vx:0, vy:0, ground:true, state:'ok', st:0, angle:0 });
+  P.nextFall = 5 + Math.random() * 6;
+  msgT = 2;
+}
+resetPlayer();
+
+function update(dt) {
+  const l = LEVELS[level];
+  if (msgT > 0) msgT -= dt;
+
+  if (P.state === 'ok') {
+    P.nextFall -= dt;
+    if (P.nextFall <= 0) { P.state = 'falling'; P.st = 0; }
+  } else {
+    P.st += dt;
+    const T = { falling:.4, lying:1, rising:.6 };
+    if (P.state === 'falling') P.angle = Math.min(1, P.st / T.falling) * Math.PI / 2;
+    if (P.state === 'rising') P.angle = (1 - Math.min(1, P.st / T.rising)) * Math.PI / 2;
+    if (P.st >= T[P.state]) {
+      P.st = 0;
+      if (P.state === 'falling') P.state = 'lying';
+      else if (P.state === 'lying') P.state = 'rising';
+      else { P.state = 'ok'; P.angle = 0; P.nextFall = 5 + Math.random() * 6; }
+    }
+  }
+
+  const can = P.state === 'ok';
+  const dir = (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0);
+  const target = can ? dir * 200 : 0;
+  P.vx += (target - P.vx) * Math.min(1, dt * (P.ground ? 12 : 5));
+  if (can && dir) P.face = dir;
+  if (can && P.ground && (keys.ArrowUp || keys.Space)) { P.vy = -560; P.ground = false; }
+
+  P.vy += 1500 * dt;
+  const oldY = P.y;
+  P.x = Math.max(12, Math.min(W - 12, P.x + P.vx * dt));
+  P.y += P.vy * dt;
+  P.ground = false;
+  if (P.vy >= 0) for (const p of l.plats) {
+    if (P.x > p.x && P.x < p.x + p.w && oldY <= p.y + 1 && P.y >= p.y) {
+      P.y = p.y; P.vy = 0; P.ground = true;
+    }
+  }
+  P.phase += Math.abs(P.vx) * dt * 0.06;
+
+  if (P.y > H + 120) resetPlayer();
+
+  const fy = l.flagY ?? GROUND;
+  if (can && Math.abs(P.x - l.flag) < 20 && Math.abs(P.y - fy) < 30) {
+    if (level < LEVELS.length - 1) { level++; resetPlayer(); }
+    else won = true;
+  }
+}
+
+function line(x1,y1,x2,y2){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
+
+function drawMan() {
+  ctx.save();
+  ctx.translate(P.x, P.y);
+  ctx.scale(P.face, 1);
+  // przewracanie wokół stóp (do przodu)
+  ctx.rotate(P.angle);
+  ctx.strokeStyle = '#111'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+
+  const hipY = -26, shY = -52, headY = -62;
+  let aL, aR, lL, lR; // kąty kończyn
+  if (P.state !== 'ok') {
+    const k = Math.sin(P.st * 12) * (P.state === 'lying' ? .15 : .5);
+    aL = -2.4 + k; aR = -1.2 - k; lL = .3 + k; lR = -.3 - k;
+  } else if (!P.ground) {
+    const up = P.vy < 0;
+    aL = up ? -2.6 : -1.6; aR = up ? -2.2 : -1.2;
+    lL = up ? .6 : .25; lR = up ? -.9 : -.35;
+  } else {
+    const s = Math.sin(P.phase) * Math.min(1, Math.abs(P.vx) / 120);
+    aL = s * 1.0; aR = -s * 1.0; lL = -s * .8; lR = s * .8;
+  }
+  // kąt 0 = w dół, + do przodu
+  const limb = (x,y,a,len) => [x + Math.sin(a) * len, y + Math.cos(a) * len];
+  let [x,y] = limb(0,hipY,lL,26); line(0,hipY,x,y);
+  [x,y] = limb(0,hipY,lR,26); line(0,hipY,x,y);
+  line(0,hipY,0,shY);
+  [x,y] = limb(0,shY,aL,22); line(0,shY,x,y);
+  [x,y] = limb(0,shY,aR,22); line(0,shY,x,y);
+  ctx.beginPath(); ctx.arc(0,headY,10,0,7); ctx.fillStyle='#fff'; ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#111'; ctx.fillRect(3,headY-3,2,2);
+  ctx.restore();
+}
+
+function draw() {
+  const l = LEVELS[level];
+  ctx.fillStyle = l.sky; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#fff6';
+  for (const [cx,cy] of [[120,70],[420,50],[650,95]]) { ctx.beginPath(); ctx.ellipse(cx,cy,45,16,0,0,7); ctx.fill(); }
+  ctx.fillStyle = l.gr;
+  for (const p of l.plats) {
+    ctx.fillRect(p.x, p.y, p.w, p.y === GROUND ? H - GROUND : 14);
+    ctx.fillStyle = '#0003'; ctx.fillRect(p.x, p.y, p.w, 4); ctx.fillStyle = l.gr;
+  }
+  // flaga
+  const fy = l.flagY ?? GROUND;
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 3; line(l.flag, fy, l.flag, fy - 60);
+  ctx.fillStyle = '#e33'; ctx.beginPath(); ctx.moveTo(l.flag,fy-60); ctx.lineTo(l.flag+30,fy-50); ctx.lineTo(l.flag,fy-40); ctx.fill();
+
+  drawMan();
+
+  ctx.fillStyle = '#000'; ctx.font = 'bold 18px system-ui';
+  ctx.fillText(`${l.name} / ${LEVELS.length}`, 12, 26);
+  if (P.state !== 'ok') { ctx.fillText('Ups! Przewrócił się...', 12, 50); }
+  if (msgT > 0) { ctx.font = 'bold 36px system-ui'; ctx.textAlign='center'; ctx.fillText(l.name, W/2, 140); ctx.textAlign='left'; }
+  if (won) {
+    ctx.fillStyle = '#000a'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 44px system-ui'; ctx.textAlign='center';
+    ctx.fillText('Wygrałeś! 🎉', W/2, H/2); ctx.font='20px system-ui'; ctx.fillText('Naciśnij R, aby zagrać od nowa', W/2, H/2+40); ctx.textAlign='left';
+  }
+}
+
+addEventListener('keydown', e => { if (e.code === 'KeyR' && won) { won = false; level = 0; resetPlayer(); } });
+
+let last = performance.now();
+(function loop(t) {
+  const dt = Math.min(.033, (t - last) / 1000); last = t;
+  if (!won) update(dt);
+  draw();
+  requestAnimationFrame(loop);
+})(last);
+</script>
+</body>
+</html>
